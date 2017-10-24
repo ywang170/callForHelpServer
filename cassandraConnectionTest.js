@@ -13,3 +13,4 @@ d.setMinutes(0);
 //d.setDate(d.getDate()+ 100);//simpley adding days or time 
 
 console.log(d);
+console.log("asdsa");
