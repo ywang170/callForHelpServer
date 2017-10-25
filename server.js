@@ -59,7 +59,6 @@ Response:
 app.get('/getQuestions/:latestQuestionId?/:oldestQuestionId?/:amount?', function(req, res){
 
 	//get user info from cookie
-	var username = req.cookies.username;
 	var sessionKey = req.cookies.sessionKey;
 	//get parameters
 	var latestQuestionId = req.params.latestQuestionId;
@@ -68,10 +67,6 @@ app.get('/getQuestions/:latestQuestionId?/:oldestQuestionId?/:amount?', function
 
 	//validate format
 	var err = [];
-	if (!inputFormatValidation.validateUsernameFormat(username, err)) {
-		res.status(400).send({error: err[0]});
-		return;
-	}
 	if (latestQuestionId && !inputFormatValidation.validateTimeuuid(latestQuestionId, err)) {
 		res.status(400).send({error: err[0]});
 		return;
@@ -85,7 +80,7 @@ app.get('/getQuestions/:latestQuestionId?/:oldestQuestionId?/:amount?', function
 	}
 
 	//validate user identity
-	validateUserSession(username, sessionKey, res, function(){
+	validateUserSession(sessionKey, res, function(username){
 		//on success query for questions from question queue
 		var query = 'SELECT questionid FROM questionqueue WHERE idlekey = 1';
 		if (latestQuestionId) {
@@ -143,7 +138,6 @@ Response:
 */
 app.post('/setQuestions/create', function(req, res){
 	//get user info from cookie
-	var username = req.cookies.username;
 	var sessionKey = req.cookies.sessionKey;
 	//get parameters
 	var questionTitle = req.body.questionTitle;
@@ -182,7 +176,9 @@ app.post('/setQuestions/create', function(req, res){
 	//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
 	//validate user identity. We create a function called checkUserLockAndCreateQuestion to repeat getting user lock for several times
-	validateUserSession(username, sessionKey, res, checkUserLockAndCreateQuestion(username, questionTitle, questionContent, questionSlots, 0, res));
+	validateUserSession(sessionKey, res, function(username){
+		checkUserLockAndCreateQuestion(username, questionTitle, questionContent, questionSlots, 0, res);
+	});
 });
 
 
@@ -201,47 +197,67 @@ app.delete('/setQuestions/delete', function(req, res){
 /*
 Description: 
 	given a username, get all slots that are behind current time (info minimum)
+	This function is special that it can take a second username
 Parameters:
-	username - name of the user
+	secondUsername - we need this because sometimes we want to get slots for both user
 Response:
 	a list of slot objects in Json, contains only Time
 */
-app.get('/getSlots/simple/', function(req, res){
+app.get('/getSlots/simple/:secondUsername', function(req, res){
 	//get user info from cookie
-	var username = req.cookies.username;
 	var sessionKey = req.cookies.sessionKey;
+	//get second user name
+	var secondUsername = req.params.secondUsername;
 
-	//validate user identity
-	validateUserSession(username, sessionKey, res, function(){
-		var query = 'SELECT time FROM slot WHERE user1username=? AND time > ?';
-		client.execute(query, [username, new Date()], {prepare: true},function (err, result) {
-			if (err) {
-				//error
-				console.error('error happened at ' + Date.now() + ' when querying for user slots. More details below: \n' +err);
-				res.status(500).send({error: err});
-			} else {
-				res.status(200).send({slots: result.rows});
-			}
+	//input validation
+	var err = [];
+	if (secondUsername && !inputFormatValidation.validateUsernameFormat(secondUsername, err)){
+		res.status(400).send({error: err[0]});
+		return;
+	}
+
+	if (secondUsername) {
+		validateUserSession(sessionKey, res, function(username){
+			var query = 'SELECT time FROM slot WHERE user1username IN (?,?) AND time > ?';
+			client.execute(query, [username,secondUsername, new Date()], {prepare: true},function (err, result) {
+				if (err) {
+					//error
+					console.error('error happened at ' + Date.now() + ' when querying for user slots. More details below: \n' +err);
+					res.status(500).send({error: err});
+				} else {
+					res.status(200).send({slots: result.rows});
+				}
+			});
 		});
-	});
+	} else {
+		validateUserSession(sessionKey, res, function(username){
+			var query = 'SELECT time FROM slot WHERE user1username=? AND time > ?';
+			client.execute(query, [username, new Date()], {prepare: true},function (err, result) {
+				if (err) {
+					//error
+					console.error('error happened at ' + Date.now() + ' when querying for user slots. More details below: \n' +err);
+					res.status(500).send({error: err});
+				} else {
+					res.status(200).send({slots: result.rows});
+				}
+			});
+		});
+	}
 
 });
 
 /*
 Description: 
 	given a username, get all slots that are behind current time (all info)
-Parameters:
-	username - name of the user
 Response:
 	a list of slot objects in Json, contains every column of a slot
 */
 app.get('/getSlots/detail/', function(req, res){
 	//get user info from cookie
-	var username = req.cookies.username;
 	var sessionKey = req.cookies.sessionKey;
 
 	//validate user identity
-	validateUserSession(username, sessionKey, res, function(){
+	validateUserSession(sessionKey, res, function(username){
 		var query = 'SELECT * FROM slot WHERE user1username=? AND time > ?';
 		client.execute(query, [username, new Date()], {prepare: true},function (err, result) {
 			if (err) {
@@ -267,7 +283,6 @@ Response:
 */
 app.post('/setSlots/confirm', function(req, res){
 	//get user info from cookie
-	var username = req.cookies.username;
 	var sessionKey = req.cookies.sessionKey;
 	//get parameters
 	var time = req.body.time;//this is supposed to be a "time" numeric casted from Date by date.getTime() then sent from client
@@ -292,7 +307,7 @@ app.post('/setSlots/confirm', function(req, res){
 	}
 
 	//validate user identity
-	validateUserSession(username, sessionKey, res, function(){
+	validateUserSession(sessionKey, res, function(username){
 		//first check if the question support to such an appointment
 		var query = 'SELECT slots, askerusername, title, answererusernames FROM question WHERE questionid = ?';
 		client.execute(query, [questionId], {prepare: true}, function(err, result){
@@ -405,7 +420,6 @@ Response:
 */
 app.get('/getNotifications/:latestNotificationId?', function(req, res){
 	//get user info from cookie
-	var username = req.cookies.username;
 	var sessionKey = req.cookies.sessionKey;
 	//get data
 	var latestNotificationId = req.body.latestNotificationId;
@@ -417,7 +431,7 @@ app.get('/getNotifications/:latestNotificationId?', function(req, res){
 	}
 
 	//user validation
-	validateUserSession(username, sessionKey, res, function(){
+	validateUserSession(sessionKey, res, function(username){
 		//ask db to mark as review
 		var query = 'SELECT * FROM notification WHERE receiverusername=?';
 		if (latestNotificationId) {
@@ -444,17 +458,16 @@ Response:
 */
 app.post('/setNotifications/removeReviewed', function(req, res){
 	//get user info from cookie
-	var username = req.cookies.username;
 	var sessionKey = req.cookies.sessionKey;
 	//get data from post
 	var latestNotificationId = req.body.latestNotificationId;
 	//input format validation
-	var err = []
+	var err = [];
 	if(!inputFormatValidation.validateTimeuuid(latestNotificationId, err)) {
 		res.status(400).send({error:err[0]});
 	}
 	//user validation
-	validateUserSession(username, sessionKey, res, function(){
+	validateUserSession(sessionKey, res, function(username){
 		//ask db to mark as review
 		var query = 'DELETE FROM notification WHERE receiverusername = ? AND notificationid <= ?';
 		client.execute(query, [username, latestNotificationId], function(err, result){
@@ -514,7 +527,7 @@ app.post('/logIn', function(req, res){
 		if (err) {
 			res.status(500).send({error: err});
 		} else if (result.rows.length == 0) {
-			res.status(404).send({error: "no user found"});
+			res.status(401).send({error: "no user found"});
 		} else {
 			//we found the user
 			if (result.rows[0].password !== password) {
@@ -523,8 +536,7 @@ app.post('/logIn', function(req, res){
 				if (needSessionKey) {
 					generateSessionKeyAndSendResponse(username, res, 0);
 				} else {
-					//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++redirect to main page+++++++++++++++++++++++++++++++++++++++++++
-					res.redirect(302, 'https://www.baidu.com');
+					res.status(200).end()
 				}
 				
 			}
@@ -612,12 +624,7 @@ app.get('/test', function(req, res){
 
 app.get('/cookieTestGet', function(req, res){
 	//get user info from cookie
-	var username = req.cookies.username;
 	var sessionKey = req.cookies.sessionKey;
-	if (!username) {
-		res.status(400).send({error: 'username missing Get'});
-		return;
-	}
 	if (!sessionKey) {
 		res.status(400).send({error: 'session key missing Get'});
 		return;
@@ -628,12 +635,7 @@ app.get('/cookieTestGet', function(req, res){
 
 app.post('/cookieTestPost', function(req, res){
 	//get user info from cookie
-	var username = req.cookies.username;
 	var sessionKey = req.cookies.sessionKey;
-	if (!username) {
-		res.status(400).send({error: 'username missing Post'});
-		return;
-	}
 	if (!sessionKey) {
 		res.status(400).send({error: 'session key missing Post'});
 		return;
@@ -727,23 +729,29 @@ Parameters:
 Reponse:
 	if the user validation is not passed, send user to log in page
 */
-function validateUserSession(username, sessionKey, res, callback){
+function validateUserSession(sessionKey, res, callback){
+	//check input. Only check if null since the rest should be checked at front end
+	if (!sessionKey) {
+		res.status(401).send({error: 'invalid username and session key'});
+		return;
+	}
+
 	//query line
-	var query = "SELECT validuntil FROM session WHERE username=? AND sessionkey=?";
+	var query = "SELECT * FROM session WHERE sessionkey=?";
 
 	//execute query
-	client.execute(query,[username, sessionKey],  {prepare: true},  function(err, result){
+	client.execute(query,[sessionKey],  {prepare: true},  function(err, result){
 		if (err) {
 			//redirect to log in page if no user session found or session has already outdated
 			console.error('error happened at '+ new Date()+' when checking session with user: %s, session key: %s, err: %s',username, sessionKey, err);
 			res.status(500).send({error: err});
 		} else  if (result.rows.length == 0) {
-			res.redirect(302, 'https://www.baidu.com');
+			res.status(401).send({error: 'user with the session not found'});
 		} else if (result.rows[0].validuntil < Date.now()) {
-			res.redirect(302, 'https://www.baidu.com');
+			res.status(401).send({error: 'user session key has expired'});
 		} else {
 			//if validation is passed, we start to request real data
-			callback();
+			callback(result.rows[0].username);
 		}
 	});
 
@@ -797,7 +805,6 @@ function generateSessionKeyAndSendResponse(username, res, triesMade) {
 			if (result.rows[0]['[applied]']) {
 				//on successful, return session key
 				if (res) {
-					res.cookie('username', username);
 					res.cookie('sessionKey', sessionKey);
 					res.status(200).send({sessionKey: sessionKey});	
 				}				
