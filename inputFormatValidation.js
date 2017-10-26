@@ -79,10 +79,12 @@ module.exports = {
 			return false;
 		}
 		var timeAfter72Hr = new Date();
-		timeAfter72Hr.setHours(timeAfter72Hr.getHours() + 72);
+		timeAfter72Hr.setHours(timeAfter72Hr.getHours() + 75);
 		for (var i = 0; i < questionSlots.length; i ++) {
-			//check if each slot is a time and then if any time is over now + 72 hour
-			if (!questionSlots[i] || isNaN(questionSlots[i]) || new Date(questionSlots[i]).getTime() >= timeAfter72Hr.getTime()) {
+			//check if each slot is a time and then if any time is over now + 75 hour (72 is limit but we give some loose)
+			if (!questionSlots[i] || questionSlots[i] >= timeAfter72Hr.getTime()) {
+				console.log(new Date(questionSlots[i]));
+				console.log(new Date(timeAfter72Hr));
 				err[0] = 'at least one time slot is invalid';
 				return false;
 			}

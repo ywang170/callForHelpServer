@@ -25,9 +25,9 @@ const authProvider = new cassandra.auth.PlainTextAuthProvider('callforhelpmanage
 
 const client = new cassandra.Client({contactPoints:['127.0.0.1:9042'], keyspace:'callforhelp', authProvider: authProvider});
 //cassandra driver log event
-client.on('log', function(level, className, message, furtherInfo){
-	console.log('***cassandra driver log event: %s -- %s', level, message);
-});
+//client.on('log', function(level, className, message, furtherInfo){
+//	console.log('***cassandra driver log event: %s -- %s', level, message);
+//});
 /*
 End: database connection======================================================================================
 */
@@ -132,11 +132,12 @@ Descriptions:
 Parameters:
 	questionTitle - title of the question
 	questionContent - content of the question
-	questionSlots - available slots of the question
+	questionSlots - available slots of the question in time instant
 Response:
 	success or not
 */
 app.post('/setQuestions/create', function(req, res){
+	console.log("creating question request received");
 	//get user info from cookie
 	var sessionKey = req.cookies.sessionKey;
 	//get parameters
@@ -154,30 +155,21 @@ app.post('/setQuestions/create', function(req, res){
 		res.status(400).send({error: err[0]});
 		return;
 	}
-	//++++++++++++++we don't allow null value! But here we are doing it for testing...add 3 hrs after creating++++++++++++++++++++++++++++++++++++=
-	//if (!inputFormatValidation.validateQuestionSlots(questionSlots, err)) {
-	//	res.status(400).send({error: err[0]});
-	//	return;
-	//}
-	if (!questionSlots) {
-		questionSlots = [];
-		var timeNow = new Date();
-		timeNow.setSeconds(0);
-		timeNow.setMinutes(0);
-		timeNow.setMilliseconds(0);
-		questionSlots.push(timeNow);
-		var timeNow2 =  new Date(timeNow);
-		timeNow2.setHours(timeNow.getHours() + 100);
-		questionSlots.push(timeNow2);
-		var timeNow3 =  new Date(timeNow);
-		timeNow3.setHours(timeNow.getHours() + 200);
-		questionSlots.push(timeNow3);
+	if (!inputFormatValidation.validateQuestionSlots(questionSlots, err)) {
+		res.status(400).send({error: err[0]});
+		return;
 	}
+
+	var questionSlotsInDate = [];
+	for (var i = 0; i < questionSlots.length; i++) {
+		questionSlotsInDate.push(new Date(questionSlots[i]));
+	}
+	
 	//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
 	//validate user identity. We create a function called checkUserLockAndCreateQuestion to repeat getting user lock for several times
 	validateUserSession(sessionKey, res, function(username){
-		checkUserLockAndCreateQuestion(username, questionTitle, questionContent, questionSlots, 0, res);
+		checkUserLockAndCreateQuestion(username, questionTitle, questionContent, questionSlotsInDate, 0, res);
 	});
 });
 
@@ -203,7 +195,7 @@ Parameters:
 Response:
 	a list of slot objects in Json, contains only Time
 */
-app.get('/getSlots/simple/:secondUsername', function(req, res){
+app.get('/getSlots/simple/:secondUsername?', function(req, res){
 	//get user info from cookie
 	var sessionKey = req.cookies.sessionKey;
 	//get second user name
@@ -659,62 +651,61 @@ Some of these could really be moved to other files
 Keep checking user lock for some times then create question
 */
 function checkUserLockAndCreateQuestion(username, questionTitle, questionContent, questionSlots, tries, res){
-	return function(e) {
-		//first check if user is not locked by try to lock user
-		var query = 'UPDATE user SET readytoask = false WHERE username = ? IF readytoask = true';//be carefull, IF has to be in upper case
-		client.execute(query, [username], {prepare:true}, function(err, result){
-			if (err) {
-				res.status(500).send({error: err});
-			} else if (!result.rows[0]['[applied]']) {
-				//if the user is already locked
-				if (tries > 5) {
-					res.status(423).send({error: 'user is asking a question now in another environment. Please try again later!'});
-				} else {
-					//wait 200 ms before next try
-					setTimeout(checkUserLockAndCreateQuestion(username, questionTitle, questionContent, questionSlots, tries+1, res), 200);
-				}
-				
+	//first check if user is not locked by try to lock user
+	var query = 'UPDATE user SET readytoask = false WHERE username = ? IF readytoask = true';//be carefull, IF has to be in upper case
+	client.execute(query, [username], {prepare:true}, function(err, result){
+		if (err) {
+			res.status(500).send({error: err});
+		} else if (!result.rows[0]['[applied]']) {
+			//if the user is already locked
+			if (tries > 5) {
+				res.status(423).send({error: 'user is asking a question now in another environment. Please try again later!'});
 			} else {
-				//now adding questions to questionqueue table
-				var query = 'INSERT INTO questionqueue (idlekey, questionid, username) VALUES (?, now(), ?)';
-				client.execute(query, [1, username], {prepare:true}, function(err, result){
-					if (err) {
-						//on error
-						res.status(500).send({error: err});
-						//unlock user directly
-						var query = 'UPDATE user SET readytoask = true WHERE username = ?';
-						client.execute(query, [username], {prepare:true});
-					} else {
-						//retrieve session id
-						var query = 'SELECT questionid FROM questionqueue WHERE idlekey = 1 AND questionid < now() AND username = ? ORDER BY questionid DESC LIMIT 1 ALLOW FILTERING';
-						client.execute(query, [username], {prepare:true}, function(err, result){
-							if (err) {
-								res.status(500).send({error: err});
-							} else if (result.rows.length <= 0) {
-								res.status(500).send({error: 'weird behavior. Question just created in question queue table is gone'});
-							} else {
-								//insert into question table and unlock user
-								var questionId = result.rows[0].questionid;
-								var queryInsertToQuestionTable = 'INSERT INTO question (questionid, askerusername, slots, title, content, createdtime, answererusernames) VALUES (?, ?, ?, ?, ?, ?, ?)';
-								var queryUnlockUser = 'UPDATE user SET readytoask = true WHERE username = ?';
-								//simultanously unlock user and insert question
-								client.execute(queryInsertToQuestionTable, [questionId, username, questionSlots, questionTitle, questionContent, new Date(), []], {prepare:true}, function(err, result){
-									if (err) {
-										res.status(500).send({error: err});
-									} else {
-										res.status(200).end();
-									}
-								});
-								client.execute(queryUnlockUser, [username], {prepare:true});
-
-							}
-						});
-					}
-				});
-
+				//wait 200 ms before next try
+				setTimeout(checkUserLockAndCreateQuestion(username, questionTitle, questionContent, questionSlots, tries+1, res), 200);
 			}
-		});
-	}
+			
+		} else {
+			console.log("lock aquired!");
+			//now adding questions to questionqueue table
+			var query = 'INSERT INTO questionqueue (idlekey, questionid, username) VALUES (?, now(), ?)';
+			client.execute(query, [1, username], {prepare:true}, function(err, result){
+				if (err) {
+					//on error
+					res.status(500).send({error: err});
+					//unlock user directly
+					var query = 'UPDATE user SET readytoask = true WHERE username = ?';
+					client.execute(query, [username], {prepare:true});
+				} else {
+					//retrieve session id
+					var query = 'SELECT questionid FROM questionqueue WHERE idlekey = 1 AND questionid < now() AND username = ? ORDER BY questionid DESC LIMIT 1 ALLOW FILTERING';
+					client.execute(query, [username], {prepare:true}, function(err, result){
+						if (err) {
+							res.status(500).send({error: err});
+						} else if (result.rows.length <= 0) {
+							res.status(500).send({error: 'weird behavior. Question just created in question queue table is gone'});
+						} else {
+							//insert into question table and unlock user
+							var questionId = result.rows[0].questionid;
+							var queryInsertToQuestionTable = 'INSERT INTO question (questionid, askerusername, slots, title, content, createdtime, answererusernames) VALUES (?, ?, ?, ?, ?, ?, ?)';
+							var queryUnlockUser = 'UPDATE user SET readytoask = true WHERE username = ?';
+							//simultanously unlock user and insert question
+							client.execute(queryInsertToQuestionTable, [questionId, username, questionSlots, questionTitle, questionContent, new Date(), []], {prepare:true}, function(err, result){
+								if (err) {
+									res.status(500).send({error: err});
+								} else {
+									res.status(200).end();
+								}
+							});
+							client.execute(queryUnlockUser, [username], {prepare:true});
+
+						}
+					});
+				}
+			});
+
+		}
+	});
 }
 
 
@@ -735,7 +726,7 @@ function validateUserSession(sessionKey, res, callback){
 		res.status(401).send({error: 'invalid username and session key'});
 		return;
 	}
-
+	console.log("validating user");
 	//query line
 	var query = "SELECT * FROM session WHERE sessionkey=?";
 
@@ -750,6 +741,7 @@ function validateUserSession(sessionKey, res, callback){
 		} else if (result.rows[0].validuntil < Date.now()) {
 			res.status(401).send({error: 'user session key has expired'});
 		} else {
+			console.log("validation passed");
 			//if validation is passed, we start to request real data
 			callback(result.rows[0].username);
 		}
