@@ -694,7 +694,7 @@ function checkUserLockAndCreateQuestion(username, questionTitle, questionContent
 								if (err) {
 									res.status(500).send({error: err});
 								} else {
-									res.status(200).end();
+									res.status(200).send({success: true});
 								}
 							});
 							client.execute(queryUnlockUser, [username], {prepare:true});
