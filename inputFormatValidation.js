@@ -58,16 +58,16 @@ module.exports = {
 	},
 
 	validateQuestionTitle: function (questionTitle, err) {
-		if (!questionTitle || typeof questionTitle !== 'string' || questionTitle.length < 15 || questionTitle.length > 100) {
-			err[0] = 'question title must be between 15 to 100 characters';
+		if (!questionTitle || typeof questionTitle !== 'string' || questionTitle.length < 15 || questionTitle.length > 200) {
+			err[0] = 'question title must be between 15 to 200 characters';
 			return false;
 		}
 		return true;
 	},
 
 	validateQuestionContent: function (questionContent, err) {
-		if (!questionContent || typeof questionContent !== 'string' || questionContent.length < 15 || questionContent.length > 2000) {
-			err[0] = 'question title must be between 15 to 2000 characters';
+		if (!questionContent || typeof questionContent !== 'string' || questionContent.length > 3000) {
+			err[0] = 'question content must be shorter than 3000 characters';
 			return false;
 		}
 		return true;

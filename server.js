@@ -116,7 +116,7 @@ app.get('/getQuestions/:latestQuestionId?/:oldestQuestionId?/:amount?', function
 						console.error('error happened at '+ Date.now() +'. weird behavior, question ids retrieved from question queue table but not found in question table');
 						res.status(404).send({error: 'question ids retrieved from question queue table but not found in question table'});
 					} else {
-						res.status(200).send({questions: result.rows});
+						res.status(200).send({questions: result.rows, username: username});
 					}
 				});
 			}
