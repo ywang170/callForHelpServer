@@ -65,13 +65,14 @@ app.get('/getQuestions/:latestQuestionId?/:oldestQuestionId?/:amount?', function
 	var oldestQuestionId = req.params.oldestQuestionId;
 	var amount = req.params.amount;
 
+
 	//validate format
 	var err = [];
-	if (latestQuestionId && !inputFormatValidation.validateTimeuuid(latestQuestionId, err)) {
+	if (latestQuestionId !== '0' && !inputFormatValidation.validateTimeuuid(latestQuestionId, err)) {
 		res.status(400).send({error: err[0]});
 		return;
 	}
-	if (oldestQuestionId && !inputFormatValidation.validateTimeuuid(oldestQuestionId, err)) {
+	if (oldestQuestionId !== '0' && !inputFormatValidation.validateTimeuuid(oldestQuestionId, err)) {
 		res.status(400).send({error: err[0]});
 		return;
 	}
@@ -83,9 +84,9 @@ app.get('/getQuestions/:latestQuestionId?/:oldestQuestionId?/:amount?', function
 	validateUserSession(sessionKey, res, function(username){
 		//on success query for questions from question queue
 		var query = 'SELECT questionid FROM questionqueue WHERE idlekey = 1';
-		if (latestQuestionId) {
+		if (latestQuestionId && latestQuestionId !== '0') {
 			query = query + ' AND questionid > ' + latestQuestionId;	
-		} else if (oldestQuestionId) {
+		} else if (oldestQuestionId && oldestQuestionId !== '0') {
 			query = query + ' AND questionid < ' + oldestQuestionId;
 		}
 		query += ' ORDER BY questionid DESC LIMIT ' + amount;
@@ -267,7 +268,7 @@ app.get('/getSlots/detail/', function(req, res){
 Description:
 	decide on answering a question at a slot. Also create notifications for asker. Also add asker to question's "answerersId" property	
 Parameters:
-	time - the time to answer the question
+	time - the time to answer the question in instant form
 	questionId - ID of the question
 	comment - whatever comment the answerer left
 Response:
@@ -283,12 +284,10 @@ app.post('/setSlots/confirm', function(req, res){
 
 	//input validation
 	var err = [];
-	//for testing we don't do validatiomm+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-	//if (!inputFormatValidation.validateTimeNumeric(time, err)) {
-	//	res.status(400).send({error: err[0]});
-	//	return;
-	//}
-	//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+	if (!inputFormatValidation.validateTimeNumeric(time, err)) {
+		res.status(400).send({error: err[0]});
+		return;
+	}
 	if (!inputFormatValidation.validateTimeuuid(questionId, err)) {
 		res.status(400).send({error: err[0]});
 		return;
@@ -329,15 +328,11 @@ app.post('/setSlots/confirm', function(req, res){
 				var timeFound = false;
 				var availableTimes = result.rows[0].slots;//time slot available in this question
 				for (var i = 0; i < availableTimes.length; i++) {
-					if (availableTimes[i] == time) {
+					if (new Date(availableTimes[i]).getTime() === time) {
 						timeFound = true;
 						break;
 					}
 				}
-				//for testing only....++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-				timeFound = true;
-				time = availableTimes[availableTimes.length-1];
-				//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 				if (!timeFound) {
 					//slot time passed in not matching available time in question
 					res.status(400).send({error: 'the time slot given is not available for this question'});
@@ -346,7 +341,7 @@ app.post('/setSlots/confirm', function(req, res){
 					//since cassandra doesn't support IF of queries from different tables or clusters... we have to do them one by one!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 					//try add questions to asker time slot
 					var query = 'INSERT INTO slot (user1username, user2username, time, questionid, questiontitle, comment, user1isasker) VALUES (?, ?, ?, ?, ?, ?, ?) IF NOT EXISTS';//create slot for answerer
-					client.execute(query, [askerUsername, username, time, questionId, questionTitle, comment, true], {prepare: true}, function(err, result) {
+					client.execute(query, [askerUsername, username, new Date(time), questionId, questionTitle, comment, true], {prepare: true}, function(err, result) {
 						if (err) {
 							console.error('error happended at ' + Date.now() + ' when tried to create slot for asker. More details: \n' + err);
 							res.status(500).send({error:err});

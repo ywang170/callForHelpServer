@@ -66,7 +66,7 @@ module.exports = {
 	},
 
 	validateQuestionContent: function (questionContent, err) {
-		if (!questionContent || typeof questionContent !== 'string' || questionContent.length > 3000) {
+		if (questionContent && (typeof questionContent !== 'string' || questionContent.length > 3000)) {
 			err[0] = 'question content must be shorter than 3000 characters';
 			return false;
 		}
@@ -95,7 +95,7 @@ module.exports = {
 	validateTimeNumeric: function(time, err) {
 		var timeAfter72Hr = new Date();
 		timeAfter72Hr.setHours(timeAfter72Hr.getHours() + 72);
-		if (!time || isNaN(time) || new Date(time).getTime() >= timeAfter72Hr.getTime()) {
+		if (!time || new Date(time).getTime() >= timeAfter72Hr.getTime()) {
 			err[0] = 'invalid time';
 			return false;
 		}
