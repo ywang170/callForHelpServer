@@ -24,6 +24,13 @@ Start: database connection and other setup======================================
 const authProvider = new cassandra.auth.PlainTextAuthProvider('callforhelpmanager', 'IneedmorePOWER999');
 
 const client = new cassandra.Client({contactPoints:['127.0.0.1:9042'], keyspace:'callforhelp', authProvider: authProvider});
+
+const Nexmo = require('nexmo');
+const nexmo = new Nexmo({
+	apiKey: 78668869,
+	apiSecret: '1e2820d7a0e982a7'
+});
+
 //cassandra driver log event
 //client.on('log', function(level, className, message, furtherInfo){
 //	console.log('***cassandra driver log event: %s -- %s', level, message);
@@ -99,7 +106,7 @@ app.get('/getQuestions/:latestQuestionId?/:oldestQuestionId?/:amount?', function
 				res.status(500).send({error: err});
 			} else if (result.rows.length == 0){
 				//if not questions found
-				res.status(200).send({questions: []});
+				res.status(200).send({questions: [], username: username});
 			} else {
 				//now query the content of questions
 				var query = 'SELECT * FROM question WHERE questionid IN ?';
@@ -169,8 +176,8 @@ app.post('/setQuestions/create', function(req, res){
 	//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
 	//validate user identity. We create a function called checkUserLockAndCreateQuestion to repeat getting user lock for several times
-	validateUserSession(sessionKey, res, function(username){
-		checkUserLockAndCreateQuestion(username, questionTitle, questionContent, questionSlotsInDate, 0, res);
+	validateUserSession(sessionKey, res, function(username, phone){
+		checkUserLockAndCreateQuestion(username, phone, questionTitle, questionContent, questionSlotsInDate, 0, res);
 	});
 });
 
@@ -298,9 +305,9 @@ app.post('/setSlots/confirm', function(req, res){
 	}
 
 	//validate user identity
-	validateUserSession(sessionKey, res, function(username){
+	validateUserSession(sessionKey, res, function(username, phone){
 		//first check if the question support to such an appointment
-		var query = 'SELECT slots, askerusername, title, answererusernames FROM question WHERE questionid = ?';
+		var query = 'SELECT slots, askerusername, title, answererusernames, askerphone FROM question WHERE questionid = ?';
 		client.execute(query, [questionId], {prepare: true}, function(err, result){
 			if (err) {
 				//error
@@ -336,48 +343,84 @@ app.post('/setSlots/confirm', function(req, res){
 				if (!timeFound) {
 					//slot time passed in not matching available time in question
 					res.status(400).send({error: 'the time slot given is not available for this question'});
-				} else {
-					var questionTitle = result.rows[0].questionTitle;//get title of the question
-					//since cassandra doesn't support IF of queries from different tables or clusters... we have to do them one by one!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-					//try add questions to asker time slot
-					var query = 'INSERT INTO slot (user1username, user2username, time, questionid, questiontitle, comment, user1isasker) VALUES (?, ?, ?, ?, ?, ?, ?) IF NOT EXISTS';//create slot for answerer
-					client.execute(query, [askerUsername, username, new Date(time), questionId, questionTitle, comment, true], {prepare: true}, function(err, result) {
-						if (err) {
-							console.error('error happended at ' + Date.now() + ' when tried to create slot for asker. More details: \n' + err);
-							res.status(500).send({error:err});
-						} else if (!result.rows[0]['[applied]']) {
-							res.status(409).send({error: 'confliction. the slot of asker is already taken'});
-						} else {
-							//make call to create slot for answerer
-							var query = 'INSERT INTO slot (user1username, user2username, time, questionid, questiontitle, comment, user1isasker) VALUES (?, ?, ?, ?, ?, ?, ?) IF NOT EXISTS';
-							client.execute(query, [username, askerUsername, time, questionId, questionTitle, comment, false], {prepare: true}, function(err, result){
-								if (err) {
-									console.error('error happended at ' + Date.now() + ' when tried to create slot for answerer. More details: \n' + err);
-									res.status(500).send({error:err});
-									//delete previous slot
-									var query = 'DELETE FROM slot where user1username=? AND time=?';
-									client.execute(query, [askerUsername, time], {prepare: true}, function(err, result){
+					return;
+				} 
+				var askerPhone = result.rows[0].askerphone;
+				var questionTitle = result.rows[0].title;//get title of the question
+				//since cassandra doesn't support IF of queries from different tables or clusters... we have to do them one by one!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+				//try add questions to asker time slot
+				var query = 'INSERT INTO slot (user1username, user2username, time, questionid, questiontitle, comment, user1isasker) VALUES (?, ?, ?, ?, ?, ?, ?) IF NOT EXISTS';//create slot for answerer
+				client.execute(query, [askerUsername, username, new Date(time), questionId, questionTitle, comment, true], {prepare: true}, function(err, result) {
+					if (err) {
+						console.error('error happended at ' + Date.now() + ' when tried to create slot for asker. More details: \n' + err);
+						res.status(500).send({error:err});
+					} else if (!result.rows[0]['[applied]']) {
+						res.status(409).send({error: 'confliction. the slot of asker is already taken'});
+					} else {
+						//make call to create slot for answerer
+						var query = 'INSERT INTO slot (user1username, user2username, time, questionid, questiontitle, comment, user1isasker) VALUES (?, ?, ?, ?, ?, ?, ?) IF NOT EXISTS';
+						client.execute(query, [username, askerUsername, time, questionId, questionTitle, comment, false], {prepare: true}, function(err, result){
+							if (err) {
+								console.error('error happended at ' + Date.now() + ' when tried to create slot for answerer. More details: \n' + err);
+								res.status(500).send({error:err});
+								//delete previous slot
+								var query = 'DELETE FROM slot where user1username=? AND time=?';
+								client.execute(query, [askerUsername, time], {prepare: true}, function(err, result){
 
-									});
-								} else if (!result.rows[0]['[applied]']) {
-									res.status(409).send({error: 'confliction. the slot of answerer is already taken'});
-									//delete previous slot
-									var query = 'DELETE FROM slot where user1username=? AND time=?';
-									client.execute(query, [askerUsername, time], {prepare: true}, function(err, result){
+								});
+							} else if (!result.rows[0]['[applied]']) {
+								res.status(409).send({error: 'confliction. the slot of answerer is already taken'});
+								//delete previous slot
+								var query = 'DELETE FROM slot where user1username=? AND time=?';
+								client.execute(query, [askerUsername, time], {prepare: true}, function(err, result){
 
-									});
-								} else {
-									//create notification and update question answerer list
-									res.status(200).end();
-									var queryAddAnswerer = "UPDATE question SET answererusernames = answererusernames + {'"+ username+ "'} WHERE questionid = ?";
-									var queryCreateNotification = 'INSERT INTO notification (receiverusername, senderusername, slottime, questionid, questiontitle, type, notificationid) VALUES (?, ?, ?, ?, ?, 1, now())';
-									client.execute(queryAddAnswerer, [questionId], {prepare: true});
-									client.execute(queryCreateNotification, [askerUsername, username, time, questionId, questionTitle], {prepare: true});
+								});
+							} else {
+								//create notification and update question answerer list
+								res.status(200).send({askerUsername: askerUsername, askerPhone: askerPhone, time: time});
+								var queryAddAnswerer = "UPDATE question SET answererusernames = answererusernames + {'"+ username+ "'} WHERE questionid = ?";
+								var queryCreateNotification = 'INSERT INTO notification (receiverusername, senderusername, slottime, questionid, questiontitle, type, notificationid, questionaskerphone, slotcomment) VALUES (?, ?, ?, ?, ?, 1, now(),?,?)';
+								client.execute(queryAddAnswerer, [questionId], {prepare: true});
+								client.execute(queryCreateNotification, [askerUsername, username, time, questionId, questionTitle, phone, comment], {prepare: true});
+								//send message
+								if (askerPhone) {
+									askerPhone = '' + askerPhone;
+									if (askerPhone.length ==10) {
+										askerPhone = '1' + askerPhone;
+									}
+									var textMessage = 'From: JustCallForHelp--' +username+ ' has scheduled a phone call with you at ' + new Date(time)+ ' on your question "' + questionTitle + 
+									'". Please make phone call to: "' + phone + '" by then :). ';
+									if(comment) {
+										textMessage += ('His/Her message: "' + comment+'"');
+									}
+									nexmo.message.sendSms(
+										'12015799261', askerPhone,  textMessage , (errInfo, responseData) => {
+											if (errInfo) {
+												console.log("error when sending message");
+											}
+										}
+									);
 								}
-							});
-						}
-					});
-				}
+								//send message to answerer
+								if (phone) {
+									phone = '' + phone;
+									if (phone.length ==10) {
+										phone = '1' + phone;
+									}
+									var textMessage = 'From: JustCallForHelp--you have scheduled a phone call with ' + askerUsername + ' at ' + new Date(time)+ ' on his/her question "' + questionTitle + 
+									'". He/She might call from: "' + askerPhone + '" by then :). ';
+									nexmo.message.sendSms(
+										'12015799261', phone,  textMessage , (errInfo, responseData) => {
+											if (errInfo) {
+												console.log("error when sending message");
+											}
+										}
+									);
+								}
+							}
+						});
+					}
+				});
 			}
 		});
 	});
@@ -508,7 +551,7 @@ app.post('/logIn', function(req, res){
 	}
 	//first valid session, if the username is sesson as username in cookie and session if valid then just extend existing cookie
 	//generate query
-	var query = 'SELECT password FROM user WHERE username=?';
+	var query = 'SELECT password, phone FROM user WHERE username=?';
 	//get password from db
 	client.execute(query, [username], {prepare: true}, function(err, result){
 		if (err) {
@@ -521,7 +564,7 @@ app.post('/logIn', function(req, res){
 				res.status(401).send({error: "username/password not match"});
 			} else {
 				if (needSessionKey) {
-					generateSessionKeyAndSendResponse(username, res, 0);
+					generateSessionKeyAndSendResponse(username, result.rows[0].phone, res, 0);
 				} else {
 					res.status(200).end()
 				}
@@ -577,7 +620,7 @@ app.post('/register', function(req, res){
 		} else {
 			if (result.rows[0]['[applied]']) {
 				//on successful, generate session key and added to session table
-				generateSessionKeyAndSendResponse(username, res, 0);
+				generateSessionKeyAndSendResponse(username, phone, res, 0);
 			} else {
 				res.status(409).send({error: "username is already taken!"});
 			}
@@ -645,7 +688,7 @@ Some of these could really be moved to other files
 /*
 Keep checking user lock for some times then create question
 */
-function checkUserLockAndCreateQuestion(username, questionTitle, questionContent, questionSlots, tries, res){
+function checkUserLockAndCreateQuestion(username, phone, questionTitle, questionContent, questionSlots, tries, res){
 	//first check if user is not locked by try to lock user
 	var query = 'UPDATE user SET readytoask = false WHERE username = ? IF readytoask = true';//be carefull, IF has to be in upper case
 	client.execute(query, [username], {prepare:true}, function(err, result){
@@ -657,7 +700,7 @@ function checkUserLockAndCreateQuestion(username, questionTitle, questionContent
 				res.status(423).send({error: 'user is asking a question now in another environment. Please try again later!'});
 			} else {
 				//wait 200 ms before next try
-				setTimeout(checkUserLockAndCreateQuestion(username, questionTitle, questionContent, questionSlots, tries+1, res), 200);
+				setTimeout(checkUserLockAndCreateQuestion(username, phone, questionTitle, questionContent, questionSlots, tries+1, res), 200);
 			}
 			
 		} else {
@@ -672,7 +715,7 @@ function checkUserLockAndCreateQuestion(username, questionTitle, questionContent
 					var query = 'UPDATE user SET readytoask = true WHERE username = ?';
 					client.execute(query, [username], {prepare:true});
 				} else {
-					//retrieve session id
+					//retrieve question id
 					var query = 'SELECT questionid FROM questionqueue WHERE idlekey = 1 AND questionid < now() AND username = ? ORDER BY questionid DESC LIMIT 1 ALLOW FILTERING';
 					client.execute(query, [username], {prepare:true}, function(err, result){
 						if (err) {
@@ -682,10 +725,10 @@ function checkUserLockAndCreateQuestion(username, questionTitle, questionContent
 						} else {
 							//insert into question table and unlock user
 							var questionId = result.rows[0].questionid;
-							var queryInsertToQuestionTable = 'INSERT INTO question (questionid, askerusername, slots, title, content, createdtime, answererusernames) VALUES (?, ?, ?, ?, ?, ?, ?)';
+							var queryInsertToQuestionTable = 'INSERT INTO question (questionid, askerusername, slots, title, content, createdtime, answererusernames, askerphone) VALUES (?, ?, ?, ?, ?, ?, ?, ?)';
 							var queryUnlockUser = 'UPDATE user SET readytoask = true WHERE username = ?';
 							//simultanously unlock user and insert question
-							client.execute(queryInsertToQuestionTable, [questionId, username, questionSlots, questionTitle, questionContent, new Date(), []], {prepare:true}, function(err, result){
+							client.execute(queryInsertToQuestionTable, [questionId, username, questionSlots, questionTitle, questionContent, new Date(), [], phone], {prepare:true}, function(err, result){
 								if (err) {
 									res.status(500).send({error: err});
 								} else {
@@ -738,7 +781,7 @@ function validateUserSession(sessionKey, res, callback){
 		} else {
 			console.log("validation passed");
 			//if validation is passed, we start to request real data
-			callback(result.rows[0].username);
+			callback(result.rows[0].username, result.rows[0].userphone);
 		}
 	});
 
@@ -767,7 +810,7 @@ Parameters:
 Reponse:
 	if the user validation is not passed, send user to log in page
 */
-function generateSessionKeyAndSendResponse(username, res, triesMade) {
+function generateSessionKeyAndSendResponse(username, phone,res, triesMade) {
 	//if tried too many times
 	if (triesMade >= 10) {
 		console.error('session key generation failure (confliction) at '+ new Date() +' for user: %s more than 10 times!', username );
@@ -777,11 +820,11 @@ function generateSessionKeyAndSendResponse(username, res, triesMade) {
 	}
 	//generate session key
 	var sessionKey = generateSessionKey();
-	var query = "INSERT INTO session (username, sessionkey, validuntil) VALUES (?, ?, ?) IF NOT EXISTS USING TTL ?";
+	var query = "INSERT INTO session (username, sessionkey, validuntil, userphone) VALUES (?, ?, ?, ?) IF NOT EXISTS USING TTL ?";
 	//set expire time to 1 year from now
 	var validUntilTime = new Date();
 	validUntilTime.setYear(validUntilTime.getFullYear()+1);
-	client.execute(query, [username, sessionKey, validUntilTime, 365*24*60*60], {prepare: true}, function (err, result) {
+	client.execute(query, [username, sessionKey, validUntilTime, phone, 365*24*60*60], {prepare: true}, function (err, result) {
 		if (err) {
 			//on call back if there is duplicate then return error
 			if (res) {
@@ -797,7 +840,7 @@ function generateSessionKeyAndSendResponse(username, res, triesMade) {
 				}				
 			} else {
 				//try agin since we have a duplication
-				generateSessionKeyAndSendResponse(username, res, triesMade+1);
+				generateSessionKeyAndSendResponse(username, phone,res, triesMade+1);
 			}
 			
 		}
