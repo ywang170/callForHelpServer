@@ -263,9 +263,9 @@ app.get('/getSlots/detail/', function(req, res){
 			if (err) {
 				//error
 				console.error('error happened at ' + Date.now() + ' when querying for user slots. More details below: \n' +err);
-				res.status(500).send({error: err});
+				res.status(500).send({error: err, username: username});
 			} else {
-				res.status(200).send({slots: result.rows});
+				res.status(200).send({slots: result.rows, username:username});
 			}
 		});
 	});
@@ -517,10 +517,70 @@ Description:
 	get questions only for this user	
 Parameters:
 	username - id of this user
+	oldestQuestionId - oldest id loaded last time
+	amount - amount of question to load
 Response:
 	a list of questions asked by this user
 */
-app.get('/getMyQuestions', function(req, res){
+app.get('/getMyQuestions/:oldestQuestionId?/:amount?', function(req, res){
+		//get user info from cookie
+	var sessionKey = req.cookies.sessionKey;
+	//get parameters
+	var oldestQuestionId = req.params.oldestQuestionId;
+	var amount = req.params.amount;
+
+
+	//validate format
+	var err = [];
+	if (oldestQuestionId !== '0' && !inputFormatValidation.validateTimeuuid(oldestQuestionId, err)) {
+		res.status(400).send({error: err[0]});
+		return;
+	}
+	if (!amount || isNaN(amount)) {
+		amount = 20;
+	}
+
+	//validate user identity
+	validateUserSession(sessionKey, res, function(username){
+		//on success query for questions from question queue
+		var query = 'SELECT questionid FROM questionqueue WHERE username=?';
+		if (oldestQuestionId && oldestQuestionId !== '0') {
+			query = query + ' AND questionid < ' + oldestQuestionId;
+		}
+		query += ' LIMIT ' + amount;
+
+		//execute query now
+		client.execute(query, [username], {prepare: true}, function(err, result) {
+			if (err) {
+				//error
+				console.error('error happened at ' + Date.now() + ' when querying for general questions in question queue table. More details below: \n' +err);
+				res.status(500).send({error: err});
+			} else if (result.rows.length == 0){
+				//if not questions found
+				res.status(200).send({questions: [], username: username});
+			} else {
+				//now query the content of questions
+				var query = 'SELECT * FROM question WHERE questionid IN ?';
+				var questionIds = [];
+				for (var i = 0; i < result.rows.length; i++) {
+					questionIds.push(result.rows[i].questionid);
+				}
+				client.execute(query, [questionIds], {prepare:true}, function(err, result) {
+					if (err) {
+						//error
+						console.error('error happened at ' + Date.now() + ' when querying for general questions in question table. More details below: \n' +err);
+						res.status(500).send({error: err});
+					} else if (result.rows.length == 0){
+						//if no questions found
+						console.error('error happened at '+ Date.now() +'. weird behavior, question ids retrieved from question queue table but not found in question table');
+						res.status(404).send({error: 'question ids retrieved from question queue table but not found in question table'});
+					} else {
+						res.status(200).send({questions: result.rows, username: username});
+					}
+				});
+			}
+		});
+	});
 });
 
 /*
@@ -716,8 +776,9 @@ function checkUserLockAndCreateQuestion(username, phone, questionTitle, question
 					client.execute(query, [username], {prepare:true});
 				} else {
 					//retrieve question id
-					var query = 'SELECT questionid FROM questionqueue WHERE idlekey = 1 AND questionid < now() AND username = ? ORDER BY questionid DESC LIMIT 1 ALLOW FILTERING';
+					var query = 'SELECT questionid FROM questionqueue WHERE username = ? LIMIT 1';
 					client.execute(query, [username], {prepare:true}, function(err, result){
+						var queryUnlockUser = 'UPDATE user SET readytoask = true WHERE username = ?';
 						if (err) {
 							res.status(500).send({error: err});
 						} else if (result.rows.length <= 0) {
@@ -726,7 +787,7 @@ function checkUserLockAndCreateQuestion(username, phone, questionTitle, question
 							//insert into question table and unlock user
 							var questionId = result.rows[0].questionid;
 							var queryInsertToQuestionTable = 'INSERT INTO question (questionid, askerusername, slots, title, content, createdtime, answererusernames, askerphone) VALUES (?, ?, ?, ?, ?, ?, ?, ?)';
-							var queryUnlockUser = 'UPDATE user SET readytoask = true WHERE username = ?';
+							
 							//simultanously unlock user and insert question
 							client.execute(queryInsertToQuestionTable, [questionId, username, questionSlots, questionTitle, questionContent, new Date(), [], phone], {prepare:true}, function(err, result){
 								if (err) {
@@ -735,9 +796,9 @@ function checkUserLockAndCreateQuestion(username, phone, questionTitle, question
 									res.status(200).send({success: true});
 								}
 							});
-							client.execute(queryUnlockUser, [username], {prepare:true});
 
 						}
+						client.execute(queryUnlockUser, [username], {prepare:true});
 					});
 				}
 			});
