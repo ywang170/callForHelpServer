@@ -349,8 +349,8 @@ app.post('/setSlots/confirm', function(req, res){
 				var questionTitle = result.rows[0].title;//get title of the question
 				//since cassandra doesn't support IF of queries from different tables or clusters... we have to do them one by one!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 				//try add questions to asker time slot
-				var query = 'INSERT INTO slot (user1username, user2username, time, questionid, questiontitle, comment, user1isasker) VALUES (?, ?, ?, ?, ?, ?, ?) IF NOT EXISTS';//create slot for answerer
-				client.execute(query, [askerUsername, username, new Date(time), questionId, questionTitle, comment, true], {prepare: true}, function(err, result) {
+				var query = 'INSERT INTO slot (user1username, user2username, time, questionid, questiontitle, comment, user1isasker, user2phone) VALUES (?, ?, ?, ?, ?, ?, ?, ?) IF NOT EXISTS';//create slot for answerer
+				client.execute(query, [askerUsername, username, new Date(time), questionId, questionTitle, comment, true, phone], {prepare: true}, function(err, result) {
 					if (err) {
 						console.error('error happended at ' + Date.now() + ' when tried to create slot for asker. More details: \n' + err);
 						res.status(500).send({error:err});
@@ -358,8 +358,8 @@ app.post('/setSlots/confirm', function(req, res){
 						res.status(409).send({error: 'confliction. the slot of asker is already taken'});
 					} else {
 						//make call to create slot for answerer
-						var query = 'INSERT INTO slot (user1username, user2username, time, questionid, questiontitle, comment, user1isasker) VALUES (?, ?, ?, ?, ?, ?, ?) IF NOT EXISTS';
-						client.execute(query, [username, askerUsername, time, questionId, questionTitle, comment, false], {prepare: true}, function(err, result){
+						var query = 'INSERT INTO slot (user1username, user2username, time, questionid, questiontitle, comment, user1isasker, user2phone) VALUES (?, ?, ?, ?, ?, ?, ?, ?) IF NOT EXISTS';
+						client.execute(query, [username, askerUsername, time, questionId, questionTitle, comment, false, askerPhone], {prepare: true}, function(err, result){
 							if (err) {
 								console.error('error happended at ' + Date.now() + ' when tried to create slot for answerer. More details: \n' + err);
 								res.status(500).send({error:err});
@@ -547,7 +547,7 @@ app.get('/getMyQuestions/:oldestQuestionId?/:amount?', function(req, res){
 		if (oldestQuestionId && oldestQuestionId !== '0') {
 			query = query + ' AND questionid < ' + oldestQuestionId;
 		}
-		query += ' LIMIT ' + amount;
+		query += ' LIMIT ' + amount + ' ALLOW FILTERING';
 
 		//execute query now
 		client.execute(query, [username], {prepare: true}, function(err, result) {
