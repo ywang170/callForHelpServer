@@ -734,6 +734,18 @@ app.post('/cookieTestPost', function(req, res){
 	res.status(200).send({info: 'Post nice!'});
 });
 
+app.get('/dangerous/dbtest', function(req, res){
+	client.execute("SELECT * FROM notification", {prepare: true}, function(err, result){
+		if (err) {
+			//on call back if there is duplicate then return error
+			res.status(500).send({error: err});
+		} else {
+			res.send(result);
+			
+		}
+	});
+});
+
 /*
 End: API================================================================================
 */
