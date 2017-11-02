@@ -908,7 +908,7 @@ function generateSessionKeyAndSendResponse(username, phone,res, triesMade) {
 			if (result.rows[0]['[applied]']) {
 				//on successful, return session key
 				if (res) {
-					res.cookie('sessionKey', sessionKey);
+					res.cookie('sessionKey', sessionKey, { maxAge: 31556926, httpOnly: true });
 					res.status(200).send({sessionKey: sessionKey});	
 				}				
 			} else {
